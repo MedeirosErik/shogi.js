@@ -172,7 +172,7 @@ let Shogi = function(sfen) {
     /* pretty = external move object */
     function make_pretty(ugly_move) {
         var move = clone(ugly_move);
-        move.san = move_to_san(move, false);
+        move.san = move_to_san(move);
         move.to = algebraic(move.to);
         move.from = move.from > 0 ? algebraic(move.from) : 'hand';
 
@@ -669,18 +669,16 @@ let Shogi = function(sfen) {
         return legal_moves;
     }
 
-    function get_desambiguator(move, sloppy) {
+    function get_desambiguator(move) {
         if (move.from === HAND) return '';
 
-        var moves = generate_moves({legal: !sloppy});
+        var moves = generate_moves({legal: true});
 
         var from = move.from;
         var to = move.to;
         var piece = move.piece_type;
 
         var ambiguities = 0;
-        //var same_rank = 0;
-        //var same_file = 0;
 
         for (var i = 0; i < moves.length; ++i) {
             var ambig_from = moves[i].from;
@@ -689,14 +687,7 @@ let Shogi = function(sfen) {
 
             if (piece === ambig_piece && from !== ambig_from && to === ambig_to) {
                 ambiguities++;
-
-                /* if (rank(from) === rank(ambig_from)) {
-                    same_rank++;
-                }
-
-                if (file(from) === file(ambig_from)) {
-                    same_file++;
-                } */
+                break;
             }
         }
 
@@ -708,10 +699,10 @@ let Shogi = function(sfen) {
     }
 
     // convert move to notation
-    function move_to_san(move, sloppy) {
+    function move_to_san(move) {
         var output = '';
 
-        var disambiguator = get_desambiguator(move, sloppy);
+        var disambiguator = get_desambiguator(move);
 
         output += move.piece_type.toUpperCase() + disambiguator;
 
@@ -902,8 +893,8 @@ let Shogi = function(sfen) {
         return ascii;
     }
 
-    function move_from_san(move, sloppy) {
-        if (sloppy) {
+    function move_from_san(move) {
+        /*if () {
             var matches = move.match(/([PLNSBR]\+?|[GK])(\d[a-i]|\d{2})([-x*'])(\d[a-i]|\d{2})([+=])?/i);
 
             var flags = 0;
@@ -934,17 +925,15 @@ let Shogi = function(sfen) {
                 to = to[0] + String.fromCharCode(96 + parseInt(to[1]));
 
             var piece_type = matches[1];
-        }
+        }*/
 
         var moves = generate_moves();
         for (var i = 0; i < moves.length; i++) {
-            // try the strict parser first, then the sloppy parser if requested by the user
-            if (
-                move === move_to_san(moves[i]) ||
-                (sloppy && move === move_to_san(moves[i], true))
-            ) {
+            if (move === move_to_san(moves[i]))
+            {
                 return moves[i];
-            } else if (
+            } 
+            /*else if (
                 matches && 
                 (!piece_type || piece_type.toLowerCase() == moves[i].piece_type) &&
                 SQUARES[from] == moves[i].from &&
@@ -952,7 +941,7 @@ let Shogi = function(sfen) {
                 flags === moves[i].flags   
             ) {
                 return moves[i];
-            }
+            }*/
         }
 
         return null;
@@ -1107,7 +1096,7 @@ let Shogi = function(sfen) {
                ) {
                    moves.push(make_pretty(ugly_moves[i]));
                } else {
-                   moves.push(move_to_san(ugly_moves[i], false));
+                   moves.push(move_to_san(ugly_moves[i]));
                }
             }
 
@@ -1197,7 +1186,7 @@ let Shogi = function(sfen) {
             var move_obj = null;
 
             if (typeof move === 'string') {
-                move_obj = move_from_san(move, false);
+                move_obj = move_from_san(move);
             } else if (typeof move === 'object') {
                 var moves = generate_moves();
                 
