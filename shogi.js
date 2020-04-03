@@ -3,7 +3,7 @@ let Shogi = function(sfen) {
     const WHITE = 'w';
 
     const EMPTY = -1;
-
+    
     const PAWN = 'p';
     const LANCE = 'l';
     const KNIGHT = 'n';
@@ -15,6 +15,7 @@ let Shogi = function(sfen) {
 
     const SYMBOLS = 'plnsgbrkPLNSGBRK';
     const PIECES_ORDER = ['r', 'b', 'g', 's', 'n', 'l', 'p'];
+    const HAND_REGEX = /^(\d*R)?(\d*B)?(\d*G)?(\d*S)?(\d*N)?(\d*L)?(\d*P)?(\d*r)?(\d*b)?(\d*g)?(\d*s)?(\d*n)?(\d*l)?(\d*p)?$/;
 
     const DEFAULT_POSITION = 'lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1';
 
@@ -89,15 +90,15 @@ let Shogi = function(sfen) {
     const RANK_I = 8;
 
     const SQUARES = {
-        a9: 0, a8:  1, a7:  2, a6:  3, a5:  4, a4:  5, a3:  6, a2:  7, a1:  8,
-        b9:10, b8: 11, b7: 12, b6: 13, b5: 14, b4: 15, b3: 16, b2: 17, b1: 18,
-        c9:20, c8: 21, c7: 22, c6: 23, c5: 24, c4: 25, c3: 26, c2: 27, c1: 28,
-        d9:30, d8: 31, d7: 32, d6: 33, d5: 34, d4: 35, d3: 36, d2: 37, d1: 38,
-        e9:40, e8: 41, e7: 42, e6: 43, e5: 44, e4: 45, e3: 46, e2: 47, e1: 48,
-        f9:50, f8: 51, f7: 52, f6: 53, f5: 54, f4: 55, f3: 56, f2: 57, f1: 58,
-        g9:60, g8: 61, g7: 62, g6: 63, g5: 64, g4: 65, g3: 66, g2: 67, g1: 68,
-        h9:70, h8: 71, h7: 72, h6: 73, h5: 74, h4: 75, h3: 76, h2: 77, h1: 78,
-        i9:80, i8: 81, i7: 82, i6: 83, i5: 84, i4: 85, i3: 86, i2: 87, i1: 88,
+        '9a': 0, '8a':  1, '7a':  2, '6a':  3, '5a':  4, '4a':  5, '3a':  6, '2a':  7, '1a':  8,
+        '9b':10, '8b': 11, '7b': 12, '6b': 13, '5b': 14, '4b': 15, '3b': 16, '2b': 17, '1b': 18,
+        '9c':20, '8c': 21, '7c': 22, '6c': 23, '5c': 24, '4c': 25, '3c': 26, '2c': 27, '1c': 28,
+        '9d':30, '8d': 31, '7d': 32, '6d': 33, '5d': 34, '4d': 35, '3d': 36, '2d': 37, '1d': 38,
+        '9e':40, '8e': 41, '7e': 42, '6e': 43, '5e': 44, '4e': 45, '3e': 46, '2e': 47, '1e': 48,
+        '9f':50, '8f': 51, '7f': 52, '6f': 53, '5f': 54, '4f': 55, '3f': 56, '2f': 57, '1f': 58,
+        '9g':60, '8g': 61, '7g': 62, '6g': 63, '5g': 64, '4g': 65, '3g': 66, '2g': 67, '1g': 68,
+        '9h':70, '8h': 71, '7h': 72, '6h': 73, '5h': 74, '4h': 75, '3h': 76, '2h': 77, '1h': 78,
+        '9i':80, '8i': 81, '7i': 82, '6i': 83, '5i': 84, '4i': 85, '3i': 86, '2i': 87, '1i': 88,
     };
     const HAND = -32;
 
@@ -105,14 +106,16 @@ let Shogi = function(sfen) {
         DROP: 'd',
         NORMAL: 'n',
         CAPTURE: 'c',
-        PROMOTION: 'p'
+        PROMOTION: 'p',
+        DECLINED_PROMOTION: '='
     }
 
     const BITS = {
         NORMAL: 1,
         DROP: 2,
         CAPTURE: 4,
-        PROMOTION: 8
+        PROMOTION: 8,
+        POSSIBLE_PROMOTION: 16
     }
 
     let board = new Array(128);
@@ -166,24 +169,65 @@ let Shogi = function(sfen) {
         return '0123456789'.indexOf(c) !== -1;
     }
 
+    /* pretty = external move object */
+    function make_pretty(ugly_move) {
+        var move = clone(ugly_move);
+        move.san = move_to_san(move, false);
+        move.to = algebraic(move.to);
+        move.from = move.from > 0 ? algebraic(move.from) : 'hand';
+
+        var flags = '';
+        for (var flag in BITS) {
+            if (flag === 'POSSIBLE_PROMOTION') continue;
+
+            if (BITS[flag] & move.flags) {
+                flags += FLAGS[flag];
+            }
+        }
+
+        if ((BITS.POSSIBLE_PROMOTION & move.flags) &&
+            (BITS.PROMOTION & move.flags)) 
+        {
+            flags += FLAGS['DECLINED_PROMOTION'];
+        }
+
+        move.flags = flags;
+
+        return move;
+    }
+
+    function clone(obj) {
+        var dupe = obj instanceof Array ? [] : {}
+    
+        for (var property in obj) {
+          if (typeof property === 'object') {
+            dupe[property] = clone(obj[property])
+          } else {
+            dupe[property] = obj[property]
+          }
+        }
+    
+        return dupe
+      }
+
     // Load a game state indicated by sfen
     function load(sfen, keep_headers) {
         if (typeof keep_headers == 'undefined') {
             keep_headers = false;
         }
 
-        var tokens = sfen.split(/\s+/);
-        var position = tokens[0];
-        var square = 0;
+        let tokens = sfen.split(/\s+/);
+        let position = tokens[0];
+        let square = 0;
         if (!validate_sfen(sfen).valid) {
-            return false;
+            return validate_sfen(sfen).error;
         }
 
         clear(keep_headers);
 
-        var promote_next = false;
-        for (var i = 0; i < position.length; i++) {
-            var piece = position.charAt(i);
+        let promote_next = false;
+        for (let i = 0; i < position.length; i++) {
+            let piece = position.charAt(i);
 
             if (piece == '+') {
                 promote_next = true;
@@ -192,7 +236,7 @@ let Shogi = function(sfen) {
             } else if (is_digit(piece, 10)) {
                 square += parseInt(piece, 10);
             } else {
-                var color = piece < 'a' ? BLACK : WHITE;
+                let color = piece < 'a' ? BLACK : WHITE;
                 put({type: piece.toLowerCase(), color: color, promoted: promote_next}, algebraic(square));
                 promote_next = false;
                 square++;
@@ -201,48 +245,107 @@ let Shogi = function(sfen) {
 
         turn = tokens[1];
 
-        var captured = tokens[2];
-        if (captured != '-') {
-            for (var i = 0; i < captured.length; i++) {
-                var piece = captured.charAt(i);
+        let captured = tokens[2];
+        if (captured !== '-') {
+            let res = HAND_REGEX.exec(captured);
 
-                if (is_digit(piece, 10)) {
-                    var qtt = parseInt(piece, 10);
-                    i += 1;
-                    piece = captured.charAt(i);
-                    var color = piece < 'a' ? BLACK : WHITE;
-                    hand[color][piece.toLowerCase()] = qtt;
-                } else {
-                    var color = piece < 'a' ? BLACK : WHITE;
-                    hand[color][piece.toLowerCase()] = 1;
-                }
+            for (let i = 1; i < res.length; i++) {
+                if(typeof res[i] === "undefined")
+                    continue;
+
+                let piece = res[i][res[i].length - 1];
+                let qtt = res[i].length > 1 ? parseInt(res[i], 10) : 1;
+                let color = piece < 'a' ? BLACK : WHITE;
+                
+                hand[color][piece.toLowerCase()] = qtt;
             }
         }
-        move_number = parseInt(tokens[3], 10);
-  
-        update_setup(generate_sfen());
 
+        move_number = parseInt(tokens[3], 10);  
+        update_setup(generate_sfen());
         return true;
     }
 
-
-    function algebraic(square_number) {
-        var rank = String.fromCharCode(97 + square_number / 10);
-        var file = 9 - (square_number % 10) % 9;
-        return rank + file;
+    function rank(i) {
+        return Math.floor(i / 10);
     }
 
-    // TODO - code the function
+    function file(i) {
+        return 9 - i % 10;
+    }
+
+    function rectify(square) {
+        if (square.toLowerCase() === 'hand') return HAND;
+
+        if ('0123456789'.indexOf(square[1]) > -1)
+            square = square[0] + String.fromCharCode(96 + parseInt(square[1]));
+
+        return SQUARES[square];
+    }
+
+    function algebraic(square_number) {
+        let r = String.fromCharCode(97 + rank(square_number));
+        let f = file(square_number);
+        return f + r;
+    }
+
     function validate_sfen(sfen) {
+        if (typeof sfen !== 'string') return false;
+    
+        // separate sfen in 4 components
+        sfen = sfen.split(' ');
+    
+        let board = sfen[0];
+        let move = sfen[1];
+        let hand = sfen[2];
+        let counter = sfen[3];
+    
+        // check board ------------------------------------------------
+        // expand the empty suqare numbers to just 1s
+        board = board.replace(/9/g, '111111111')
+                    .replace(/8/g, '11111111')
+                    .replace(/7/g, '1111111')
+                    .replace(/6/g, '111111')
+                    .replace(/5/g, '11111')
+                    .replace(/4/g, '1111')
+                    .replace(/3/g, '111')
+                    .replace(/2/g, '11');
+    
+        // SFEN should be 9 sections separated by slashes
+        let chunks = board.split('/');
+        if (chunks.length !== 9) 
+            return { valid: false, error: 'Board state does not contain all 9 ranks.' };
+    
+        // check each section
+        for (let i = 0; i < 9; i++) {
+            if (chunks[i].replace('+', '').length !== 9 || chunks[i].search(/^(?:(\+?[krbgsnlpKRBGSNLP])|1)+$/) !== 0)
+                return { valid: false, error: 'Rank ' + String.fromCharCode(97 + i) + ' does not match pattern.'};   
+        }
+        // ------------------------------------------------------------
+    
+        // check move
+        if (move !== 'b' && move !== 'w')
+            return { valid: false, error: "Move state must be either 'b' or 'w'."};
+        
+        // check hand
+        if (hand !== '-' && !HAND_REGEX.test(hand))
+            return { valid: false, error: 'Pieces in hand do not match pattern' };
+    
+        // check counter
+        if (parseInt(counter) <= 0) 
+        {
+            return { valid: false, error: 'Move counter must be a positive integer.' };
+        }
+
         return { valid: true, error_number: 0, error: 'No Errors' };
     }
 
     function generate_sfen() {
-        var empty = 0;
-        var position = '';
+        let empty = 0;
+        let position = '';
 
         // Board State
-        for (var i = SQUARES.a9; i <= SQUARES.i1; i++) {
+        for (let i = SQUARES['9a']; i <= SQUARES['1i']; i++) {
             if (i % 10 == 9) continue;
 
             if (board[i] == null) {
@@ -253,8 +356,8 @@ let Shogi = function(sfen) {
                     empty = 0;
                 }
 
-                var color = board[i].color;
-                var piece = board[i].type;
+                let color = board[i].color;
+                let piece = board[i].type;
 
                 position += (board[i].promoted) ? '+' : '';
                 position += (color === BLACK) ? piece.toUpperCase() : piece.toLowerCase();
@@ -265,7 +368,7 @@ let Shogi = function(sfen) {
                     position += empty;
                 }
 
-                if (i !== SQUARES.i1) {
+                if (i !== SQUARES['1i']) {
                     position += '/';
                 }
 
@@ -274,14 +377,14 @@ let Shogi = function(sfen) {
         }
 
         // Pieces in hand
-        var hands = '';
-        var num_in_hand = 0;
-        var color = [BLACK, WHITE];
-        for(var k = 0; k < color.length; k++) {
+        let hands = '';
+        let num_in_hand = 0;
+        let color = [BLACK, WHITE];
+        for(let k = 0; k < color.length; k++) {
 
             for (i = 0; i < PIECES_ORDER.length; i++) {
-                var piece = PIECES_ORDER[i];
-                var qtt = hand[color[k]][piece];
+                let piece = PIECES_ORDER[i];
+                let qtt = hand[color[k]][piece];
                 num_in_hand += qtt;
     
                 if (qtt > 0) {
@@ -304,7 +407,7 @@ let Shogi = function(sfen) {
     }
 
     function set_header(args) {
-        for (var i = 0; i < args.length; i++) {
+        for (let i = 0; i < args.length; i++) {
             if (typeof args[i] === 'string' && typeof args[i+1] === 'string') {
                 header[args[i]] = args[i+1];
             }
@@ -313,25 +416,25 @@ let Shogi = function(sfen) {
     }
 
     /* called when the initial board setup is changed with put() or remove().
-    * modifies the SetUp and FEN properties of the header object.  if the FEN is
-    * equal to the default position, the SetUp and FEN are deleted
+    * modifies the SetUp and SFEN properties of the header object.  if the SFEN is
+    * equal to the default position, the SetUp and SFEN are deleted
     * the setup is only updated if history.length is zero, ie moves haven't been
     * made.
     */
-    function update_setup(fen) {
+    function update_setup(sfen) {
         if (history.length > 0) return;
 
-        if (fen !== DEFAULT_POSITION) {
+        if (sfen !== DEFAULT_POSITION) {
             header['SetUp'] = '1';
-            header['FEN'] = fen;
+            header['SFEN'] = sfen;
         } else {
             delete header['SetUp'];
-            delete header['FEN'];
+            delete header['SFEN'];
         }
     }
 
     function get(square) {
-        var piece = board[SQUARES[square]];
+        let piece = board[SQUARES[square]];
         return piece ? {type: piece.type, color: piece.color, promoted: piece.promoted} : null;
     }
 
@@ -351,7 +454,7 @@ let Shogi = function(sfen) {
             return false;
         }
 
-        var sq = SQUARES[square];
+        let sq = SQUARES[square];
 
         /* don't let user place more than one king */
         if (piece.type == KING && !(kings[piece.color] == EMPTY || kings[piece.color] == sq)) {
@@ -373,14 +476,14 @@ let Shogi = function(sfen) {
     }
 
     function remove(square) {
-        var piece = get(square);
+        let piece = get(square);
         board[SQUARES[square]] = null;
         if (piece && piece.type === KING) {
             kings[piece.color] = EMPTY;
         }
 
         if (piece && piece.type === PAWN && !piece.promoted) {
-            var sq = SQUARES[square];
+            let sq = SQUARES[square];
             pawns[piece.color] &= ~(1 << (sq % 10));
         }
 
@@ -390,7 +493,7 @@ let Shogi = function(sfen) {
     }
 
     function build_move(board, piece_type, from, to, flags, promotion) {
-        var move = {
+        let move = {
             color: turn,
             from: from,
             to: to,
@@ -416,23 +519,28 @@ let Shogi = function(sfen) {
     function generate_moves(options) {
 
         function add_move(board, moves, piece, from, to, flags) {
-            /** If promotions */
-            if (!(piece.promoted || from == HAND || piece.type == KING || piece.type == GOLD)) {
-                // if promotion is possible, add move with promotion
-                var to_rank = Math.floor(to / 10);
-                var from_rank = Math.floor(from / 10);
-                var final_rank = (piece.color === BLACK) ? RANK_A : RANK_I;
-                if (Math.abs(final_rank - to_rank) < 3 || Math.abs(final_rank - from_rank) < 3) {
-                    moves.push(build_move(board, piece.type, from, to, flags, true));
-                }
+            // If the piece is not eligible for promotion
+            if (piece.promoted || from == HAND || piece.type == KING || piece.type == GOLD) {
+                // Push move without promotion and leave function
+                moves.push(build_move(board, piece.type, from, to, flags, false));
+                return;
+            }
 
-                // if promotion is not obligatory
-                if (!must_promote(piece, to)) {
-                    // Push move without promotion
-                    moves.push(build_move(board, piece.type, from, to, flags, false));
-                }
-            } else {
-                // Push move without promotion
+            // If piece is eligible for promotion
+            var to_rank = Math.floor(to / 10);
+            var from_rank = Math.floor(from / 10);
+            var final_rank = (piece.color === BLACK) ? RANK_A : RANK_I;
+
+            // Promotion is possible
+            if (Math.abs(final_rank - to_rank) < 3 || Math.abs(final_rank - from_rank) < 3) { 
+                moves.push(build_move(board, piece.type, from, to, flags | BITS.POSSIBLE_PROMOTION | BITS.PROMOTION, true));
+
+                // if promotion is not obligatory, push another move without promotion
+                if (!must_promote(piece, to))
+                    moves.push(build_move(board, piece.type, from, to, flags | BITS.POSSIBLE_PROMOTION, false));
+            } 
+            // Promotion is not possible
+            else {
                 moves.push(build_move(board, piece.type, from, to, flags, false));
             }
         }
@@ -440,8 +548,8 @@ let Shogi = function(sfen) {
         var moves = [];
         var us = turn;
 
-        var first_sq = SQUARES.a9;
-        var last_sq = SQUARES.i1;
+        var first_sq = SQUARES['9a'];
+        var last_sq = SQUARES['1i'];
 
         /*  do we want legal moves? */
         var legal  =
@@ -491,7 +599,7 @@ let Shogi = function(sfen) {
                     var offset = offset_list[j];
                     var square = i + offset;
 
-                    if (square % 10 == 9 || square > SQUARES.i1 || square < SQUARES.a9) continue;
+                    if (square % 10 == 9 || square > SQUARES['1i'] || square < SQUARES['9a']) continue;
 
                     // if square is empty, add move
                     // if else, add capture
@@ -513,7 +621,7 @@ let Shogi = function(sfen) {
 
                     while(true) {
                         square += offset;
-                        if (square % 10 == 9 || square > SQUARES.i1 || square < SQUARES.a9) break;
+                        if (square % 10 == 9 || square > SQUARES['1i'] || square < SQUARES['9a']) break;
 
                         if (board[square] == null) {
                             add_move(board, moves, piece, i, square, BITS.NORMAL);
@@ -532,10 +640,10 @@ let Shogi = function(sfen) {
             for (piece_type in hand[us]) {
                 if (hand[us][piece_type] <= 0) continue;
                 
-                for (var i = SQUARES.a9; i <= SQUARES.i1; i++) {
+                for (var i = SQUARES['9a']; i <= SQUARES['1i']; i++) {
                     if (i % 10 == 9 || board[i] != null) continue;
-                    if (piece_type === PAWN && (pawns[us] & (1 << (i % 10))) != 0) continue;
-                    if (must_promote({type: piece_type, color: us}, i)) continue;
+                    if (piece_type === PAWN && (pawns[us] & (1 << (i % 10))) != 0) continue; // cannot have two pawn in the same file
+                    if (must_promote({type: piece_type, color: us}, i)) continue; // cannot drop a piece in a region where promotion is obligatory
 
                     add_move(board, moves, {type: piece_type, color: us, promoted: false}, HAND, i, BITS.DROP);
                 }
@@ -549,8 +657,8 @@ let Shogi = function(sfen) {
         for (var i = 0, len = moves.length; i < len; i++) {
             make_move(moves[i]);
             
-            if (!king_attacked(us)) {
-                if (!(moves[i].flags & BITS.DROP) || (moves[i].piece_type !== PAWN) || !in_checkmate()) {
+            if (!king_attacked(us)) { // verify if there is check
+                if (!(moves[i].flags & BITS.DROP) || (moves[i].piece_type !== PAWN) || !in_checkmate()) { // can not check mate with pawn drop
                     legal_moves.push(moves[i]);
                 }
             }
@@ -561,9 +669,69 @@ let Shogi = function(sfen) {
         return legal_moves;
     }
 
+    function get_desambiguator(move, sloppy) {
+        if (move.from === HAND) return '';
+
+        var moves = generate_moves({legal: !sloppy});
+
+        var from = move.from;
+        var to = move.to;
+        var piece = move.piece_type;
+
+        var ambiguities = 0;
+        //var same_rank = 0;
+        //var same_file = 0;
+
+        for (var i = 0; i < moves.length; ++i) {
+            var ambig_from = moves[i].from;
+            var ambig_to = moves[i].to;
+            var ambig_piece = moves[i].piece_type;
+
+            if (piece === ambig_piece && from !== ambig_from && to === ambig_to) {
+                ambiguities++;
+
+                /* if (rank(from) === rank(ambig_from)) {
+                    same_rank++;
+                }
+
+                if (file(from) === file(ambig_from)) {
+                    same_file++;
+                } */
+            }
+        }
+
+        if (ambiguities > 0) {
+            return algebraic(from);
+        }
+
+        return '';
+    }
+
     // convert move to notation
     function move_to_san(move, sloppy) {
-        // TO-DO
+        var output = '';
+
+        var disambiguator = get_desambiguator(move, sloppy);
+
+        output += move.piece_type.toUpperCase() + disambiguator;
+
+        if (move.flags & BITS.CAPTURE) {
+            output += 'x';
+        } else if (move.flags & BITS.DROP) {
+            output += '*';
+        } else {
+            output += '-';
+        }
+
+        output += algebraic(move.to);
+
+        if (move.flags & BITS.PROMOTION) {
+                output += '+';
+        } else if (move.flags & BITS.POSSIBLE_PROMOTION) {
+                output += '=';
+        }
+
+        return output;
     }
 
     function push(move) {
@@ -654,6 +822,11 @@ let Shogi = function(sfen) {
         if (move.flags & BITS.DROP) {
             board[move.to] = null;
             hand[us][move.piece_type]++;
+
+            // TODO: if had dropped a pawn, remove it from our pawns
+            if (move.piece_type === PAWN)
+                pawns[us] &= ~(1 << (move.to % 10));
+
         } else {
             board[move.from] = board[move.to]; 
             board[move.to] = null;
@@ -662,15 +835,18 @@ let Shogi = function(sfen) {
                 board[move.to] = move.captured;
                 hand[us][move.captured.type]--;
 
-                // if we captured a pawn
+                // TODO: if we had captured an unpromoted pawn, add it back to their pawns
+                if (move.captured.type === PAWN && !move.captured.promoted)
+                    pawns[them] |= (1 << (move.to % 10));
             }
     
             // to undo any promotions
             if (move.flags & BITS.PROMOTION) {
                 board[move.from].promoted = false;
 
-                // if we promoted a pawn
-
+                // TODO: if we promoted a pawn, add the unpromoted pawn back to our pawns
+                if (move.piece_type === PAWN)
+                    pawns[us] |= (1 << (move.from % 10));
             }
         }        
 
@@ -685,7 +861,7 @@ let Shogi = function(sfen) {
         }
 
         ascii += '\n+----+----+----+----+----+----+----+----+----+\n';
-        for (let i = SQUARES.a9; i <= SQUARES.i1; i++) {
+        for (let i = SQUARES['9a']; i <= SQUARES['1i']; i++) {
             if (i % 10 == 9) {
                 ascii += '\n+----+----+----+----+----+----+----+----+----+\n';
                 continue;
@@ -727,11 +903,63 @@ let Shogi = function(sfen) {
     }
 
     function move_from_san(move, sloppy) {
+        if (sloppy) {
+            var matches = move.match(/([PLNSBR]\+?|[GK])(\d[a-i]|\d{2})([-x*'])(\d[a-i]|\d{2})([+=])?/i);
 
+            var flags = 0;
+            if (matches[5] === '+') {
+                flags |= (BITS.POSSIBLE_PROMOTION | BITS.PROMOTION);
+            } else if (matches[5] === '=') {
+                flags |= BITS.POSSIBLE_PROMOTION;
+            }
+
+            if (matches[3] === '-')
+                flags |= BITS.NORMAL;
+            else if (matches[3] === 'x')
+                flags |= BITS.CAPTURE;
+            else
+                flags |= BITS.DROP;
+
+            if (matches[5])
+                flags |= BITS.POSSIBLE_PROMOTION;
+
+            // find origin
+            var from = matches[2];
+            if ('0123456789'.indexOf(from[1]) > -1)
+                from = from[0] + String.fromCharCode(96 + parseInt(from[1]));
+
+            // destination
+            var to = matches[4];
+            if ('0123456789'.indexOf(to[0]) > -1)
+                to = to[0] + String.fromCharCode(96 + parseInt(to[1]));
+
+            var piece_type = matches[1];
+        }
+
+        var moves = generate_moves();
+        for (var i = 0; i < moves.length; i++) {
+            // try the strict parser first, then the sloppy parser if requested by the user
+            if (
+                move === move_to_san(moves[i]) ||
+                (sloppy && move === move_to_san(moves[i], true))
+            ) {
+                return moves[i];
+            } else if (
+                matches && 
+                (!piece_type || piece_type.toLowerCase() == moves[i].piece_type) &&
+                SQUARES[from] == moves[i].from &&
+                SQUARES[to] == moves[i].to &&
+                flags === moves[i].flags   
+            ) {
+                return moves[i];
+            }
+        }
+
+        return null;
     }
     
     function attacked(color, square) {
-        for (var i = SQUARES.a9; i <= SQUARES.i1; i++) {
+        for (var i = SQUARES['9a']; i <= SQUARES['1i']; i++) {
             /* did we run off the end of the board */
             if (i % 10 === 9)
                 continue;
@@ -802,7 +1030,7 @@ let Shogi = function(sfen) {
 
     // Return true if the piece must be promoted when the move is executed
     function must_promote(piece, to) {
-        if ([PAWN, LANCE, KNIGHT].indexOf(piece.type) == -1) {
+        if ([PAWN, LANCE, KNIGHT].indexOf(piece.type) === -1) {
             return false;
         }
 
@@ -833,7 +1061,7 @@ let Shogi = function(sfen) {
             'n': 4,
         }
         
-        for (var i = SQUARES.a9; i <= SQUARES.i1; i++) {
+        for (var i = SQUARES['9a']; i <= SQUARES['1i']; i++) {
             if (i % 10 === 9) continue;
             
             if (board[i] != null) {
@@ -863,34 +1091,211 @@ let Shogi = function(sfen) {
         reset: function() {
             return reset();
         },
-        
-        generate_sfen: function() {
-            return generate_sfen();
+
+        moves: function(options) {
+            var ugly_moves = generate_moves(options);
+            var moves = []
+
+            for (var i = 0; i < ugly_moves.length; i++) {
+                /* does the user want a full move object (most likely not), or just
+                * SAN
+                */
+               if (
+                   typeof options !== 'undefined' &&
+                   'verbose' in options &&
+                   options.verbose
+               ) {
+                   moves.push(make_pretty(ugly_moves[i]));
+               } else {
+                   moves.push(move_to_san(ugly_moves[i], false));
+               }
+            }
+
+            return moves;
+        },
+
+        in_check: function() {
+            return in_check();
+        },
+
+        in_checkmate: function() {
+            return in_checkmate();
+        },
+
+        in_stalemate: function() {
+            return in_stalemate();
         },
         
-        clear: function() {
-            return clear();
+        validate_sfen: function(sfen) {
+            return validate_sfen(sfen);
+        },
+
+        sfen: function() {
+            return generate_sfen();
+        },
+
+        position: function() {
+            var board_pos = [];
+            var row = [];
+
+            for (let i = SQUARES['9a']; i <= SQUARES['1i']; i++) {
+                if (board[i] == null) {
+                    row.push(null);
+                } else {
+                    row.push({type: board[i].type, color: board[i].color, promoted: board[i].promoted});
+                }
+
+                if (i % 10 === 8) {
+                    board_pos.push(row);
+                    row = [];
+                    i += 1;
+                }
+            }
+
+            var output = {
+                'board': board_pos,
+                'hands': {
+                    'black': clone(hand['b']),
+                    'white': clone(hand['w'])
+                }
+            }
+
+            return output;
+        },
+
+        header: function(arguments) {
+            return set_header(arguments);
         },
 
         ascii: function() {
             return ascii();
         },
 
-        generate_moves: function(options) {
-            return generate_moves(options);
+        turn: function() {
+            return turn;
         },
 
-        make_move: function(move) {
-            return make_move(move, true);
+        move: function(move, options) {
+            /* The move function can be called with in the following parameters:
+            *
+            * .move('P-9c')      <- where 'move' is a case-sensitive SAN string
+            *
+            * .move({ from: '9d', <- where the 'move' is a move object (additional
+            *         to :'9c',      fields are ignored)
+            *         promotion: true,
+            *      })
+            * 
+            * or if it is a drop:
+            * 
+            * .move({ from: 'hand',
+            *         to: '9c',
+            *         piece_type: 'P'
+            *       })
+            * 
+            */
+
+            var move_obj = null;
+
+            if (typeof move === 'string') {
+                move_obj = move_from_san(move, false);
+            } else if (typeof move === 'object') {
+                var moves = generate_moves();
+                
+                /* convert the pretty move object to an ugly move object */
+                for (var i = 0; i < moves.length; i++) {
+                    if ((
+                            rectify(move.from) === moves[i].from || 
+                            (move.from.toLowerCase() === 'hand' && (moves[i].flags & BITS.DROP))
+                        ) 
+                        &&
+                        rectify(move.to) === moves[i].to 
+                        &&
+                        (
+                            !('piece_type' in move) || 
+                            move.piece_type.toLowerCase() === moves[i].piece_type.toLowerCase()
+                        ) 
+                        &&
+                        (
+                            (move.promotion && (moves[i].flags & BITS.PROMOTION)) || 
+                            (!move.promotion && !(moves[i].flags & BITS.PROMOTION))
+                        )
+                    ) {
+                        move_obj = moves[i];
+                        break;
+                    }
+                }
+            }
+
+            /* failed to find move */
+            if (!move_obj) {
+                return null;
+            }
+
+            /**
+             * need to make a copy of move because we can't generate SAN after
+             * the move is made
+             */
+            var pretty_move = make_pretty(move_obj);
+
+            make_move(move_obj);
+
+            return pretty_move;
+        },
+
+        undo: function() {
+            var move = undo_move();
+            return move ? make_pretty(move) : null;
+        },
+
+        clear: function() {
+            return clear();
+        },
+
+        put: function(piece, square) {
+            return put(piece, square);
+        },
+
+        get: function(square) {
+            return get(square);
+        },
+      
+        remove: function(square) {
+            return remove(square)
+        },
+
+
+        history: function (options) {
+            var reversed_history = [];
+            var move_history = [];
+            var verbose =
+                typeof options !== 'undefined' &&
+                'verbose' in options &&
+                options.verbose;
+
+            while (history.length > 0) {
+                reversed_history.push(undo_move());
+            }
+
+            while (reversed_history.length > 0) {
+                var move = reversed_history.pop();
+                if (verbose) {
+                    move_history.push(make_pretty(move));
+                } else {
+                    move_history.push(move_to_san(move));
+                }
+                make_move(move);
+            }
+
+            return move_history;
         },
 
         attacked: function(color, square) {
             return attacked(color, square);
         },
 
-        verify_qtt: function() {
-            return verify_qtt();
-        }
+        print: function() {
+            return console.log(ascii());
+        },
      }      
 };
 
@@ -899,4 +1304,4 @@ if (typeof exports !== 'undefined') exports.Shogi = Shogi;
 if (typeof define !== 'undefined')
   define(function() {
     return Shogi;
-  });''
+  });
